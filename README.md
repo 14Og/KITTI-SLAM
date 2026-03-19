@@ -10,6 +10,7 @@ Currently tested environment (Linux x86_64):
 
 ## Reproduce:
 1. Install libeigen3-dev.
+2. `git submodule update`
 2. Run `uv sync`.
 3. Run `scripts/build_scancontext.sh`
 4. Test it with `uv run scripts/test_scancontext.py`
