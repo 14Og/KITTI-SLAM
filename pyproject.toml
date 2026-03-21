@@ -11,7 +11,9 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.4.3",
     "open3d>=0.19.0",
+    "opencv-python>=4.13.0.92",
     "pykitti>=0.3.1",
+    "pyqt5>=5.15.11",
 ]
 
 [tool.uv]

@@ -209,3 +209,9 @@ memory/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Kitti 80 GB dataset
+data/
+
+# Experiments
+**.ipynb
