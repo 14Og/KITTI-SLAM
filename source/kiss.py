@@ -15,6 +15,7 @@ class LiDARodometry:
 
     def register(self, points: np.ndarray) -> np.ndarray:
         """Register a (N, 3) point cloud and return the 4x4 pose in world frame."""
+
         assert isinstance(points, np.ndarray), f"expected ndarray, got {type(points)}"
         assert points.ndim == 2 and points.shape[1] == 3, f"expected (N, 3), got {points.shape}"
 
@@ -31,4 +32,5 @@ class LiDARodometry:
     @property
     def last_delta(self) -> np.ndarray:
         """Relative transform from the last registration (for odometry factors)."""
+
         return self._kiss.last_delta.copy()
