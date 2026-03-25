@@ -155,7 +155,7 @@ Gyro integration  ─────────────────► IMU fac
 
 | Method | APE rmse | APE mean | APE max |
 |--------|----------|----------|---------|
-| KISS-ICP | 0.799 m | 0.695 m | 1.430 m |
+| KISS-ICP | **0.799 m** | **0.695 m** | **1.430 m** |
 | M1: ISAM2 + loops | 0.846 m | 0.733 m | 1.558 m |
 | M2: ISAM2 + IMU + loops | 0.843 m | 0.729 m | 1.549 m |
 
@@ -197,8 +197,8 @@ Best IMU improvement: APE rmse drops from 2.71 m (M1) to 2.64 m (M2), a 2.6% red
 | Method | APE rmse | APE mean | APE max |
 |--------|----------|----------|---------|
 | KISS-ICP | 12.531 m | 11.177 m | 27.136 m |
-| M1: ISAM2 + loops | **10.910 m** | **9.235 m** | **25.765 m** |
-| M2: ISAM2 + IMU + loops | 11.009 m | 9.431 m | 25.589 m |
+| M1: ISAM2 + loops | **10.910 m** | **9.235 m** | 25.765 m |
+| M2: ISAM2 + IMU + loops | 11.009 m | 9.431 m | **25.589 m** |
 
 On this long sequence the IMU slightly hurts APE rmse compared to M1, but reduces APE max. The systematic gyroscope yaw scale error (~0.5° per frame) accumulates over 4500 frames, occasionally pulling the optimizer away from the LiDAR solution. The Huber robust model limits the damage, but cannot fully eliminate it.
 
