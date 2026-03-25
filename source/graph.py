@@ -25,6 +25,7 @@ class NoiseSigmas:
     )
     odometry: np.ndarray = field(default_factory=lambda: np.array([0.1, 0.1, 0.1, 0.5, 0.5, 0.5]))
     loop: np.ndarray = field(default_factory=lambda: np.array([0.1, 0.1, 0.1, 0.5, 0.5, 0.5]))
+    imu: np.ndarray = field(default_factory=lambda: np.array([1.0, 1.0, 1.0, 5.0, 5.0, 5.0]))
 
 
 class PoseGraph:
@@ -37,10 +38,16 @@ class PoseGraph:
         self._prior_noise = gtsam.noiseModel.Diagonal.Sigmas(noise.prior)
         self._odometry_noise = gtsam.noiseModel.Diagonal.Sigmas(noise.odometry)
         self._loop_noise = gtsam.noiseModel.Diagonal.Sigmas(noise.loop)
+        base_imu = gtsam.noiseModel.Diagonal.Sigmas(noise.imu)
+        self._imu_noise = gtsam.noiseModel.Robust.Create(
+            gtsam.noiseModel.mEstimator.Huber.Create(1.345), base_imu
+        )
 
         self._graph = gtsam.NonlinearFactorGraph()
         self._initial = gtsam.Values()
         self._n_nodes = 0
+        self._loop_edges: list[tuple[int, int]] = []
+        self._imu_edges: list[tuple[int, int]] = []
 
     def add_first_pose(self, pose: np.ndarray):
         """Add the first node with a prior factor anchoring it."""
@@ -67,12 +74,28 @@ class PoseGraph:
         self._initial.insert(i, pose3_from_matrix(pose))
         self._n_nodes += 1
 
+    def add_imu_odometry(self, delta: np.ndarray):
+        """Add an IMU-derived relative pose factor between the last two nodes.
+
+        This is a loose BetweenFactorPose3 providing a second opinion on
+        relative motion, complementing the tighter LiDAR odometry factor.
+        """
+
+        assert self._n_nodes >= 2, "need at least two nodes"
+        i = self._n_nodes - 2
+        j = self._n_nodes - 1
+        self._graph.add(
+            gtsam.BetweenFactorPose3(i, j, pose3_from_matrix(delta), self._imu_noise)
+        )
+        self._imu_edges.append((i, j))
+
     def add_loop_closure(self, i: int, j: int, T_relative: np.ndarray):
         """Add a loop closure factor between nodes i and j."""
 
         self._graph.add(
             gtsam.BetweenFactorPose3(i, j, pose3_from_matrix(T_relative), self._loop_noise)
         )
+        self._loop_edges.append((i, j))
 
     def optimize(self) -> list[np.ndarray]:
         """Run ISAM2 update and return all optimized poses as 4x4 matrices."""
@@ -91,6 +114,14 @@ class PoseGraph:
     @property
     def n_nodes(self) -> int:
         return self._n_nodes
+
+    @property
+    def loop_edges(self) -> list[tuple[int, int]]:
+        return self._loop_edges
+
+    @property
+    def imu_edges(self) -> list[tuple[int, int]]:
+        return self._imu_edges
 
     def dot(self, first_n: int | None = None) -> str:
         """Return graphviz DOT string for the graph.

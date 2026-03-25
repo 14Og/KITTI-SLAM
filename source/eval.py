@@ -32,9 +32,9 @@ def compute_rpe(
     gt_poses: list[np.ndarray],
     est_poses: list[np.ndarray],
     delta: float = 1.0,
-) -> dict[str, float]:
-    """Compute RPE translation error (m) per frame."""
-    
+) -> tuple[dict[str, float], np.ndarray]:
+    """Compute RPE translation error (m) per frame. Returns (statistics, per-frame errors)."""
+
     traj_ref = poses_to_traj(gt_poses)
     traj_est = poses_to_traj(est_poses)
     rpe = metrics.RPE(
@@ -43,16 +43,16 @@ def compute_rpe(
         delta_unit=metrics.Unit.frames,
     )
     rpe.process_data((traj_ref, traj_est))
-    return rpe.get_all_statistics()
+    return rpe.get_all_statistics(), rpe.error
 
 
 def compute_rpe_rotation(
     gt_poses: list[np.ndarray],
     est_poses: list[np.ndarray],
     delta: float = 1.0,
-) -> dict[str, float]:
-    """Compute RPE rotation error (degrees) per frame."""
-    
+) -> tuple[dict[str, float], np.ndarray]:
+    """Compute RPE rotation error (degrees) per frame. Returns (statistics, per-frame errors)."""
+
     traj_ref = poses_to_traj(gt_poses)
     traj_est = poses_to_traj(est_poses)
     rpe = metrics.RPE(
@@ -61,7 +61,7 @@ def compute_rpe_rotation(
         delta_unit=metrics.Unit.frames,
     )
     rpe.process_data((traj_ref, traj_est))
-    return rpe.get_all_statistics()
+    return rpe.get_all_statistics(), rpe.error
 
 
 def print_metrics(
@@ -80,6 +80,174 @@ def print_metrics(
         print(
             f"    RPE rot   rmse={rpe_rot_stats['rmse']:.4f}°   mean={rpe_rot_stats['mean']:.4f}°   max={rpe_rot_stats['max']:.4f}°"
         )
+
+
+def plot_metrics_over_time(
+    gt_poses: list[np.ndarray],
+    estimates: dict[str, list[np.ndarray]],
+    title: str = "",
+):
+    """Plot APE, RPE translation, and RPE rotation vs frame for multiple methods.
+
+    Args:
+        gt_poses: ground truth poses.
+        estimates: {method_name: list of 4x4 poses}.
+        title: plot title prefix.
+    """
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+
+    window = 50
+
+    for name, est_poses in estimates.items():
+        _, ape_err = compute_ape(gt_poses, est_poses)
+        _, rpe_err = compute_rpe(gt_poses, est_poses)
+        _, rpe_rot_err = compute_rpe_rotation(gt_poses, est_poses)
+
+        axes[0].plot(ape_err, label=name, linewidth=1.0, alpha=0.85)
+
+        # Raw RPE as faint background, running average as solid line
+        kernel = np.ones(window) / window
+        rpe_smooth = np.convolve(rpe_err, kernel, mode="valid")
+        rpe_rot_smooth = np.convolve(rpe_rot_err, kernel, mode="valid")
+        offset = window // 2
+
+        color = axes[1].plot(rpe_err, linewidth=0.3, alpha=0.25)[0].get_color()
+        axes[1].plot(np.arange(offset, offset + len(rpe_smooth)), rpe_smooth,
+                     label=name, linewidth=1.5, color=color)
+
+        axes[2].plot(rpe_rot_err, linewidth=0.3, alpha=0.25, color=color)
+        axes[2].plot(np.arange(offset, offset + len(rpe_rot_smooth)), rpe_rot_smooth,
+                     label=name, linewidth=1.5, color=color)
+
+    axes[0].set_ylabel("APE (m)")
+    axes[0].set_title(f"{title} — APE" if title else "APE")
+    axes[0].legend()
+
+    axes[1].set_ylabel("RPE trans (m)")
+    axes[1].set_title("RPE translation")
+
+    axes[2].set_ylabel("RPE rot (deg)")
+    axes[2].set_title("RPE rotation")
+    axes[2].set_xlabel("Frame")
+
+    for ax in axes:
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_graph(
+    poses: list[np.ndarray],
+    loop_edges: list[tuple[int, int]],
+    imu_edges: Optional[list[tuple[int, int]]] = None,
+    gt_poses: Optional[list[np.ndarray]] = None,
+    title: str = "Pose Graph",
+    max_nodes: Optional[int] = None,
+    start_node: Optional[int] = None,
+):
+    """Plot the pose graph spatially: nodes at XY positions, edges color-coded by type.
+
+    Args:
+        poses: optimized 4x4 poses (nodes).
+        loop_edges: list of (i, j) loop closure pairs.
+        imu_edges: list of (i, j) IMU factor pairs (M2 only).
+        gt_poses: optional ground truth trajectory.
+        title: plot title.
+    """
+    from matplotlib.collections import LineCollection
+    from matplotlib.patches import FancyArrowPatch
+
+    # Clip to subgraph window — default to region around first loop closure
+    window = max_nodes or 150
+    if start_node is None:
+        if loop_edges:
+            first_loop = min(max(i, j) for i, j in loop_edges)
+            start_node = max(0, first_loop - window // 4)
+        else:
+            start_node = 0
+    end_node = min(len(poses), start_node + window)
+    poses = poses[start_node:end_node]
+    loop_edges = [(i - start_node, j - start_node)
+                  for i, j in loop_edges if start_node <= i < end_node and start_node <= j < end_node]
+    if imu_edges:
+        imu_edges = [(i - start_node, j - start_node)
+                     for i, j in imu_edges if start_node <= i < end_node and start_node <= j < end_node]
+    if gt_poses is not None:
+        gt_poses = gt_poses[start_node:end_node]
+
+    xy = extract_xy(poses)
+    _, ax = plt.subplots(figsize=(9, 9))
+
+    # Ground truth
+    if gt_poses is not None:
+        gt_xy = extract_xy(gt_poses)
+        ax.plot(gt_xy[:, 0], gt_xy[:, 1], "--", color="gray", linewidth=1.2,
+                label="Ground truth", zorder=1)
+
+    # Odometry factors (sequential edges)
+    ax.plot(xy[:, 0], xy[:, 1], color="#4a90d9", linewidth=1.0,
+            label="Odometry factors", zorder=2, alpha=0.7)
+
+    # IMU factors — quadratic bezier arcs (LIO-SAM style), vectorized via LineCollection
+    if imu_edges:
+        avg_edge = np.linalg.norm(np.diff(xy, axis=0), axis=1).mean()
+        arc_h = avg_edge * 1.5  # arc height = 1.5x average edge length
+
+        idx_i = np.array([i for i, j in imu_edges])
+        idx_j = np.array([j for i, j in imu_edges])
+        p0 = xy[idx_i]
+        p2 = xy[idx_j]
+
+        # Control point: midpoint offset perpendicular to the edge (consistent side)
+        edge = p2 - p0
+        perp = np.stack([-edge[:, 1], edge[:, 0]], axis=1)
+        norm = np.linalg.norm(perp, axis=1, keepdims=True)
+        norm = np.where(norm < 1e-10, 1.0, norm)
+        p1 = (p0 + p2) / 2 + arc_h * perp / norm
+
+        # Sample quadratic bezier: shape (n_edges, 12, 2)
+        t = np.linspace(0, 1, 12)[None, :, None]
+        arcs = (1 - t)**2 * p0[:, None, :] + 2 * (1 - t) * t * p1[:, None, :] + t**2 * p2[:, None, :]
+
+        lc = LineCollection(arcs, color="#d47324", linewidth=0.7, alpha=0.5, zorder=3)
+        ax.add_collection(lc)
+        ax.plot([], [], color="#d47324", linewidth=2.0, alpha=0.9,
+                label=f"IMU factors ({len(imu_edges)})")
+
+    # Loop closure factors — curved arcs to avoid dense polygon fill
+    arc_rad = 0.25
+    for i, j in loop_edges:
+        patch = FancyArrowPatch(
+            posA=(xy[i, 0], xy[i, 1]),
+            posB=(xy[j, 0], xy[j, 1]),
+            connectionstyle=f"arc3,rad={arc_rad}",
+            color="crimson",
+            linewidth=0.7,
+            alpha=0.25,
+            arrowstyle="-",
+            zorder=4,
+        )
+        ax.add_patch(patch)
+    if loop_edges:
+        ax.plot([], [], color="crimson", linewidth=2.0,
+                label=f"Loop closure factors ({len(loop_edges)})")
+
+    # Nodes — subsample for large graphs, but keep them visible
+    node_step = max(1, len(xy) // 400)
+    ax.scatter(xy[::node_step, 0], xy[::node_step, 1],
+               s=14, color="#1a1a2e", zorder=6, linewidths=0,
+               label=f"Nodes ({len(xy)})")
+
+    # ax.set_aspect("equal")
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.set_title(title)
+    ax.legend(loc="upper left")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
 
 
 def extract_xy(poses: list[np.ndarray]) -> np.ndarray:
@@ -145,8 +313,8 @@ def plot_ape_on_trajectory(
     from matplotlib.colors import Normalize
 
     ape_stats, ape_errors = compute_ape(gt_poses, est_poses)
-    rpe_stats = compute_rpe(gt_poses, est_poses)
-    rpe_rot_stats = compute_rpe_rotation(gt_poses, est_poses)
+    rpe_stats, _ = compute_rpe(gt_poses, est_poses)
+    rpe_rot_stats, _ = compute_rpe_rotation(gt_poses, est_poses)
 
     est_xy = extract_xy(est_poses)
     gt_xy = extract_xy(gt_poses)
